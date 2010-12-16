@@ -48,7 +48,7 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 
 @implementation SDURLCache
 
-@synthesize diskCachePath, minCacheInterval, ioQueue, periodicMaintenanceOperation;
+@synthesize diskCachePath, minCacheInterval, ioQueue, periodicMaintenanceOperation, allowDiskCachingOfMemoryOnlyResponses;
 @dynamic diskCacheInfo;
 
 #pragma mark SDURLCache (tools)
@@ -404,7 +404,23 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
         // Init the operation queue
         self.ioQueue = [[[NSOperationQueue alloc] init] autorelease];
         ioQueue.maxConcurrentOperationCount = 1; // used to streamline operations in a separate thread
-    }
+		
+		// On iOS >= 4.2, forceDiskCachingOfMemoryOnlyResponses is enabled by default
+		// (use NSClassFromString() to avoid a dependancy to UIKit)
+		Class UIDeviceClass = NSClassFromString(@"UIDevice");
+		if (UIDeviceClass) {
+			NSString *systemVersion = [[[UIDeviceClass class]
+										performSelector:@selector(currentDevice)]
+									   performSelector:@selector(systemVersion)];
+			NSArray *versionComponents = [systemVersion componentsSeparatedByString:@"."];
+			NSInteger majorVersionNumber = [[versionComponents objectAtIndex:0] integerValue];
+			NSInteger minorVersionNumber = [[versionComponents objectAtIndex:1] integerValue];
+			
+			if (majorVersionNumber > 4 || (majorVersionNumber == 4 && minorVersionNumber >= 2))
+				self.allowDiskCachingOfMemoryOnlyResponses = YES;
+			
+		}
+	}
 
     return self;
 }
@@ -423,7 +439,10 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 
     [super storeCachedResponse:cachedResponse forRequest:request];
 
-    if (cachedResponse.storagePolicy == NSURLCacheStorageAllowed
+    BOOL storageAllowed = (cachedResponse.storagePolicy == NSURLCacheStorageAllowed
+						   || (cachedResponse.storagePolicy == NSURLCacheStorageAllowedInMemoryOnly
+							   && self.allowDiskCachingOfMemoryOnlyResponses));
+    if (   storageAllowed
         && [cachedResponse.response isKindOfClass:[NSHTTPURLResponse self]]
         && cachedResponse.data.length < self.diskCapacity)
     {
