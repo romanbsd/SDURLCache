@@ -20,6 +20,9 @@
     NSTimer *periodicMaintenanceTimer;
     NSOperation *periodicMaintenanceOperation;
 	BOOL allowDiskCachingOfMemoryOnlyResponses;
+	NSDateFormatter *rfc1223_formatter;
+	NSDateFormatter *ansi_formatter;
+	NSDateFormatter *rfc850_formatter;
 }
 
 /*

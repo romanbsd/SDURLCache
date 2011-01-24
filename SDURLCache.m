@@ -44,12 +44,21 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 @property (nonatomic, retain) NSOperationQueue *ioQueue;
 @property (retain) NSOperation *periodicMaintenanceOperation;
 - (void)periodicMaintenance;
++ (NSDateFormatter*)createFormatter:(NSString*)format;
 @end
 
 @implementation SDURLCache
 
 @synthesize diskCachePath, minCacheInterval, ioQueue, periodicMaintenanceOperation, allowDiskCachingOfMemoryOnlyResponses;
 @dynamic diskCacheInfo;
+
++ (NSDateFormatter*)createFormatter:(NSString*)format {
+	NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
+	[dateFormatter setLocale:[[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] autorelease]];
+	[dateFormatter setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"GMT"]];
+	[dateFormatter setDateFormat:format];
+	return [dateFormatter autorelease];
+}
 
 #pragma mark SDURLCache (tools)
 
@@ -65,39 +74,28 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 /*
  * Parse HTTP Date: http://www.w3.org/Protocols/rfc2616/rfc2616-sec3.html#sec3.3.1
  */
-+ (NSDate *)dateFromHttpDateString:(NSString *)httpDate
+- (NSDate *)dateFromHttpDateString:(NSString *)httpDate
 {
-    NSDate *date = nil;
+	NSDate *date = nil;
 
-    NSDateFormatter *dateFormatter = [[NSDateFormatter alloc] init];
-    [dateFormatter setLocale:[[[NSLocale alloc] initWithLocaleIdentifier:@"en_US"] autorelease]];
-    [dateFormatter setTimeZone:[NSTimeZone timeZoneWithAbbreviation:@"GMT"]];
+	// RFC 1123 date format - Sun, 06 Nov 1994 08:49:37 GMT
+	date = [rfc1223_formatter dateFromString:httpDate];
+	if (!date) {
+		// ANSI C date format - Sun Nov  6 08:49:37 1994
+		date = [ansi_formatter dateFromString:httpDate];
+		if (!date) {
+			// RFC 850 date format - Sunday, 06-Nov-94 08:49:37 GMT
+			date = [rfc850_formatter dateFromString:httpDate];
+		}
+	}
 
-    // RFC 1123 date format - Sun, 06 Nov 1994 08:49:37 GMT
-    [dateFormatter setDateFormat:@"EEE, dd MMM yyyy HH:mm:ss z"];
-    date = [dateFormatter dateFromString:httpDate];
-    if (!date)
-    {
-        // ANSI C date format - Sun Nov  6 08:49:37 1994
-        [dateFormatter setDateFormat:@"EEE MMM d HH:mm:ss yyyy"];
-        date = [dateFormatter dateFromString:httpDate];
-        if (!date)
-        {
-            // RFC 850 date format - Sunday, 06-Nov-94 08:49:37 GMT
-            [dateFormatter setDateFormat:@"EEEE, dd-MMM-yy HH:mm:ss z"];
-            date = [dateFormatter dateFromString:httpDate];
-        }
-    }
-
-    [dateFormatter release];
-
-    return date;
+	return date;
 }
 
 /*
  * This method tries to determine the expiration date based on a response headers dictionary.
  */
-+ (NSDate *)expirationDateFromHeaders:(NSDictionary *)headers withStatusCode:(NSInteger)status
+- (NSDate *)expirationDateFromHeaders:(NSDictionary *)headers withStatusCode:(NSInteger)status
 {
     if (status != 200 && status != 203 && status != 300 && status != 301 && status != 302 && status != 307 && status != 410)
     {
@@ -118,7 +116,7 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
     NSDate *now;
     if (date)
     {
-        now = [SDURLCache dateFromHttpDateString:date];
+        now = [self dateFromHttpDateString:date];
     }
     else
     {
@@ -162,7 +160,7 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
     if (expires)
     {
         NSTimeInterval expirationInterval = 0;
-        NSDate *expirationDate = [SDURLCache dateFromHttpDateString:expires];
+        NSDate *expirationDate = [self dateFromHttpDateString:expires];
         if (expirationDate)
         {
             expirationInterval = [expirationDate timeIntervalSinceDate:now];
@@ -190,7 +188,7 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
     if (lastModified)
     {
         NSTimeInterval age = 0;
-        NSDate *lastModifiedDate = [SDURLCache dateFromHttpDateString:lastModified];
+        NSDate *lastModifiedDate = [self dateFromHttpDateString:lastModified];
         if (lastModifiedDate)
         {
             // Define the age of the document by comparing the Date header with the Last-Modified header
@@ -420,6 +418,15 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 				self.allowDiskCachingOfMemoryOnlyResponses = YES;
 			
 		}
+		if (!rfc1223_formatter) {
+			rfc1223_formatter = [[SDURLCache createFormatter:@"EEE, dd MMM yyyy HH:mm:ss z"] retain];
+		}
+		if (!ansi_formatter) {
+			ansi_formatter = [[SDURLCache createFormatter:@"EEE MMM d HH:mm:ss yyyy"] retain];
+		}
+		if (!rfc850_formatter) {
+			rfc850_formatter = [[SDURLCache createFormatter:@"EEEE, dd-MMM-yy HH:mm:ss z"] retain];
+		}
 	}
 
     return self;
@@ -446,7 +453,7 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
         && [cachedResponse.response isKindOfClass:[NSHTTPURLResponse self]]
         && cachedResponse.data.length < self.diskCapacity)
     {
-        NSDate *expirationDate = [SDURLCache expirationDateFromHeaders:[(NSHTTPURLResponse *)cachedResponse.response allHeaderFields]
+        NSDate *expirationDate = [self expirationDateFromHeaders:[(NSHTTPURLResponse *)cachedResponse.response allHeaderFields]
                                                         withStatusCode:((NSHTTPURLResponse *)cachedResponse.response).statusCode];
         if (!expirationDate || [expirationDate timeIntervalSinceNow] - minCacheInterval <= 0)
         {
@@ -546,6 +553,10 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
     [diskCachePath release], diskCachePath = nil;
     [diskCacheInfo release], diskCacheInfo = nil;
     [ioQueue release], ioQueue = nil;
+	[rfc1223_formatter release];
+	[ansi_formatter release];
+	[rfc850_formatter release];
+	rfc850_formatter = ansi_formatter = rfc1223_formatter = nil;
     [super dealloc];
 }
 
