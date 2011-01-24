@@ -307,6 +307,8 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
 
     @synchronized(self.diskCacheInfo)
     {
+        // TODO Evict cached objects whose expirationDate has past first
+
         // Apply LRU cache eviction algorithm while disk usage outreach capacity
         NSDictionary *sizes = [self.diskCacheInfo objectForKey:kSDURLCacheInfoSizesKey];
 
@@ -453,12 +455,18 @@ static float const kSDURLCacheDefault = 3600; // Default cache expiration delay 
         && [cachedResponse.response isKindOfClass:[NSHTTPURLResponse self]]
         && cachedResponse.data.length < self.diskCapacity)
     {
-        NSDate *expirationDate = [self expirationDateFromHeaders:[(NSHTTPURLResponse *)cachedResponse.response allHeaderFields]
-                                                        withStatusCode:((NSHTTPURLResponse *)cachedResponse.response).statusCode];
-        if (!expirationDate || [expirationDate timeIntervalSinceNow] - minCacheInterval <= 0)
-        {
-            // This response is not cacheable, headers said
-            return;
+        NSDate *expirationDate = nil;
+        NSDictionary *headers = [(NSHTTPURLResponse *)cachedResponse.response allHeaderFields];
+        // RFC 2616 section 13.3.4 says clients MUST use Etag in any cache-conditional request if provided by server
+        NSString *etag = [headers objectForKey:@"Etag"];
+        if (! etag) {
+            expirationDate = [self expirationDateFromHeaders:headers
+                                                    withStatusCode:((NSHTTPURLResponse *)cachedResponse.response).statusCode];
+            if (!expirationDate || [expirationDate timeIntervalSinceNow] - minCacheInterval <= 0)
+            {
+                // This response is not cacheable, headers said
+                return;
+            }
         }
 
         [ioQueue addOperation:[[[NSInvocationOperation alloc] initWithTarget:self
